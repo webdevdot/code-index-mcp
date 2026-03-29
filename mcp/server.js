@@ -31,12 +31,36 @@ import {
   getProjectFolders,
   triggerIndexing,
 } from '../api/dashboard.js';
+import Indexer from '../indexer/indexer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = path.join(path.dirname(__dirname), 'web');
 
 // Initialize database
 initializeDatabase();
+
+/**
+ * Auto-index project when MCP server starts
+ * Can be disabled with SKIP_AUTO_INDEX=true environment variable
+ */
+async function autoIndexProject() {
+  const skipAutoIndex = process.env.SKIP_AUTO_INDEX === 'true';
+  if (skipAutoIndex) {
+    console.log('⏭️  Auto-indexing skipped (SKIP_AUTO_INDEX=true)\n');
+    return;
+  }
+
+  console.log('🔄 Starting auto-indexing...');
+  try {
+    const indexer = new Indexer(process.cwd());
+    await indexer.indexProject(false);
+    indexer.close();
+    console.log('✓ Auto-indexing completed successfully\n');
+  } catch (error) {
+    console.error('✗ Auto-indexing failed:', error.message);
+    // Don't exit - server should still work for searches
+  }
+}
 
 // Define MCP tools
 const TOOLS = [
@@ -473,6 +497,9 @@ async function main() {
   const mode = args[0] || 'stdio';
 
   console.log('\n🚀 Code Index MCP Server\n');
+
+  // Start auto-indexing
+  await autoIndexProject();
 
   if (mode === 'http') {
     // HTTP mode
