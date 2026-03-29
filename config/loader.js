@@ -30,6 +30,12 @@ export function loadConfig() {
 
     // Supported languages
     SUPPORTED_LANGUAGES: (process.env.SUPPORTED_LANGUAGES || 'javascript,typescript,jsx,tsx,python,php').split(',').map(l => l.trim()),
+
+    // Project folders to index
+    PROJECT_FOLDERS: (process.env.PROJECT_FOLDERS || './').split(',').map(p => p.trim()),
+
+    // Enable indexing button
+    ENABLE_INDEXING_BUTTON: process.env.ENABLE_INDEXING_BUTTON !== 'false',
   };
 
   // Load from .env file if it exists

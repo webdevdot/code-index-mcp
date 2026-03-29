@@ -28,6 +28,8 @@ import {
   updateConfigAPI,
   getHealthStatus,
   getIndexActivity,
+  getProjectFolders,
+  triggerIndexing,
 } from '../api/dashboard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -348,6 +350,28 @@ function createExpressServer(port = 3000) {
     try {
       const activity = getIndexActivity();
       res.json(activity);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/folders', (req, res) => {
+    try {
+      const folders = getProjectFolders();
+      res.json(folders);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/index', (req, res) => {
+    try {
+      const { folderPath } = req.body;
+      if (!folderPath) {
+        return res.status(400).json({ error: 'folderPath is required' });
+      }
+      const result = triggerIndexing(folderPath);
+      res.json(result);
     } catch (error) {
       res.status(500).json({ error: error.message });
     }

@@ -57,11 +57,39 @@
             </div>
           </div>
 
-          <!-- Last Indexed -->
-          <div class="last-indexed">
-            <span>Last Indexed:</span>
-            <strong id="lastIndexed">-</strong>
-            <button class="btn btn-small" id="reindexBtn">🔄 Reindex</button>
+          <!-- Last Indexed & Indexing Controls -->
+          <div class="indexing-section">
+            <div class="last-indexed">
+              <span>Last Indexed:</span>
+              <strong id="lastIndexed">-</strong>
+              <button class="btn btn-small" id="reindexBtn">🔄 Reindex All</button>
+              <button class="btn btn-small" id="indexFolderBtn">📁 Index Folder</button>
+            </div>
+
+            <!-- Folder Indexing Modal -->
+            <div id="folderIndexModal" class="modal" style="display: none;">
+              <div class="modal-content">
+                <div class="modal-header">
+                  <h2>Index Project Folder</h2>
+                  <span class="modal-close" onclick="closeFolderModal()">&times;</span>
+                </div>
+                <div class="modal-body">
+                  <div class="form-group">
+                    <label for="folderPathInput">Folder Path</label>
+                    <input type="text" id="folderPathInput" class="form-input" placeholder="/path/to/project" />
+                    <small>Enter absolute or relative path to the project folder</small>
+                  </div>
+                  <div class="indexing-status" id="indexingStatus" style="display: none; margin-top: 1rem;">
+                    <div class="spinner"></div>
+                    <span id="statusText">Indexing in progress...</span>
+                  </div>
+                </div>
+                <div class="modal-footer">
+                  <button class="btn btn-secondary" onclick="closeFolderModal()">Cancel</button>
+                  <button class="btn btn-primary" id="startIndexBtn">Start Indexing</button>
+                </div>
+              </div>
+            </div>
           </div>
 
           <!-- Charts Section -->
@@ -201,6 +229,14 @@
               <label for="debounceDelay">Debounce Delay (ms)</label>
               <input type="number" id="debounceDelay" name="debounceDelay" class="form-input" min="100" />
               <small>Wait time before reindexing after file changes</small>
+            </div>
+
+            <hr style="margin: 2rem 0; border: none; border-top: 1px solid #e5e7eb;" />
+
+            <div class="form-group">
+              <label for="projectFolders">Project Folders to Index</label>
+              <textarea id="projectFolders" name="projectFolders" class="form-input" rows="4" placeholder="Enter absolute paths, one per line&#10;/Users/hardik/Developer/project1&#10;/Users/hardik/Developer/project2"></textarea>
+              <small>Enter absolute paths to project folders to index, one per line</small>
             </div>
 
             <div class="form-actions">

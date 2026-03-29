@@ -55,6 +55,10 @@ function setupEventListeners() {
   // Reindex button
   document.getElementById('reindexBtn').addEventListener('click', reindexDatabase);
 
+  // Index folder button
+  document.getElementById('indexFolderBtn').addEventListener('click', openFolderModal);
+  document.getElementById('startIndexBtn').addEventListener('click', indexFolder);
+
   // Settings form
   const settingsForm = document.getElementById('settingsForm');
   settingsForm.addEventListener('submit', e => {
@@ -321,6 +325,9 @@ async function loadSettings() {
     document.getElementById('autoIndex').checked = config.autoIndex;
     document.getElementById('batchSize').value = config.batchSize;
     document.getElementById('debounceDelay').value = config.debounceDelay;
+
+    // Load project folders
+    await loadProjectFolders();
   } catch (error) {
     console.error('Error loading settings:', error);
   }
@@ -474,6 +481,88 @@ function showAlert(message, type = 'info') {
 }
 
 /**
+ * Open folder indexing modal
+ */
+function openFolderModal() {
+  document.getElementById('folderIndexModal').style.display = 'block';
+  document.getElementById('folderPathInput').focus();
+}
+
+/**
+ * Close folder indexing modal
+ */
+function closeFolderModal() {
+  document.getElementById('folderIndexModal').style.display = 'none';
+  document.getElementById('folderPathInput').value = '';
+  document.getElementById('indexingStatus').style.display = 'none';
+}
+
+/**
+ * Index a specific folder
+ */
+async function indexFolder() {
+  const folderPath = document.getElementById('folderPathInput').value.trim();
+
+  if (!folderPath) {
+    showAlert('Please enter a folder path', 'error');
+    return;
+  }
+
+  try {
+    document.getElementById('startIndexBtn').disabled = true;
+    document.getElementById('startIndexBtn').textContent = '⏳ Starting...';
+    document.getElementById('indexingStatus').style.display = 'flex';
+    document.getElementById('statusText').textContent = `Indexing: ${folderPath}`;
+
+    const response = await fetch(`${API_BASE}/index`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderPath }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Indexing failed');
+    }
+
+    const result = await response.json();
+    document.getElementById('statusText').textContent = `✓ ${result.message}`;
+
+    setTimeout(() => {
+      showAlert(`Indexing started for ${folderPath}`, 'success');
+      closeFolderModal();
+      setTimeout(refreshDashboard, 2000);
+      document.getElementById('startIndexBtn').disabled = false;
+      document.getElementById('startIndexBtn').textContent = 'Start Indexing';
+    }, 1000);
+  } catch (error) {
+    console.error('Index error:', error);
+    showAlert('Indexing failed: ' + error.message, 'error');
+    document.getElementById('startIndexBtn').disabled = false;
+    document.getElementById('startIndexBtn').textContent = 'Start Indexing';
+    document.getElementById('indexingStatus').style.display = 'none';
+  }
+}
+
+/**
+ * Load project folders from config
+ */
+async function loadProjectFolders() {
+  try {
+    const response = await fetch(`${API_BASE}/folders`);
+    if (!response.ok) throw new Error('Failed to fetch folders');
+
+    const data = await response.json();
+    const folderTextarea = document.getElementById('projectFolders');
+    if (folderTextarea) {
+      folderTextarea.value = data.folders.join('\n');
+    }
+  } catch (error) {
+    console.error('Error loading project folders:', error);
+  }
+}
+
+/**
  * Escape HTML to prevent XSS
  */
 function escapeHtml(text) {
@@ -481,6 +570,14 @@ function escapeHtml(text) {
   div.textContent = text;
   return div.innerHTML;
 }
+
+// Close modal when clicking outside
+window.addEventListener('click', function (event) {
+  const modal = document.getElementById('folderIndexModal');
+  if (event.target === modal) {
+    closeFolderModal();
+  }
+});
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', init);

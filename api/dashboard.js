@@ -297,3 +297,60 @@ export function getIndexActivity() {
     throw new Error(`Failed to get activity: ${error.message}`);
   }
 }
+
+/**
+ * Get configured project folders
+ */
+export function getProjectFolders() {
+  try {
+    const config = getConfig();
+    return {
+      folders: config.PROJECT_FOLDERS,
+      enableIndexing: config.ENABLE_INDEXING_BUTTON,
+    };
+  } catch (error) {
+    throw new Error(`Failed to get project folders: ${error.message}`);
+  }
+}
+
+/**
+ * Trigger indexing for specified folder
+ */
+export function triggerIndexing(folderPath) {
+  try {
+    const config = getConfig();
+
+    // Validate folder path exists
+    if (!fs.existsSync(folderPath)) {
+      throw new Error(`Folder does not exist: ${folderPath}`);
+    }
+
+    if (!fs.statSync(folderPath).isDirectory()) {
+      throw new Error(`Path is not a directory: ${folderPath}`);
+    }
+
+    // Import the Indexer class
+    const { Indexer } = require('../indexer/indexer.js');
+
+    // Create and run indexer for the folder
+    const indexer = new Indexer(folderPath);
+
+    // Run indexing (asynchronous)
+    indexer.index()
+      .then(() => {
+        console.log(`✓ Indexing completed for ${folderPath}`);
+      })
+      .catch(err => {
+        console.error(`✗ Indexing failed for ${folderPath}: ${err.message}`);
+      });
+
+    return {
+      success: true,
+      message: `Indexing started for ${folderPath}`,
+      folder: folderPath,
+      startedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    throw new Error(`Failed to trigger indexing: ${error.message}`);
+  }
+}
