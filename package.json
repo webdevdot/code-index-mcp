@@ -4,12 +4,19 @@
   "description": "Production-ready MCP server for code indexing and search using SQLite",
   "type": "module",
   "main": "mcp/server.js",
+  "bin": {
+    "code-index": "bin/cli.js",
+    "code-index-server": "bin/server.js",
+    "code-index-dashboard": "bin/dashboard.js"
+  },
   "scripts": {
     "index": "node indexer/indexer.js",
     "watch": "node watcher/watcher.js",
-    "server": "node mcp/server.js",
-    "dev": "node mcp/server.js",
-    "test-search": "curl -X POST http://localhost:3000/mcp -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"search_code\",\"arguments\":{\"query\":\"function\"}}}'",
+    "server": "node mcp/server.js http 34244",
+    "dev": "node mcp/server.js http 34244",
+    "dashboard": "node mcp/server.js http 34244",
+    "dashboard:cli": "node cli/dashboard.js",
+    "test-search": "curl -X POST http://localhost:34244/mcp -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"search_code\",\"arguments\":{\"query\":\"function\"}}}'",
     "clean": "rm -f code-index.db"
   },
   "keywords": [
@@ -23,7 +30,7 @@
   "license": "MIT",
   "dependencies": {
     "@babel/parser": "^7.24.0",
-    "@modelcontextprotocol/sdk": "^0.1.0",
+    "@modelcontextprotocol/sdk": "^1.28.0",
     "better-sqlite3": "^9.0.0",
     "chokidar": "^3.5.3",
     "express": "^4.18.2",

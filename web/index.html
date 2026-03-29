@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Code Index Dashboard</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <!-- Header -->
+      <header class="header">
+        <div class="header-content">
+          <h1>📊 Code Index Dashboard</h1>
+          <p class="subtitle">Visualize and manage your code indexing</p>
+        </div>
+        <div class="header-right">
+          <div class="status-indicator" id="statusIndicator">
+            <div class="status-dot"></div>
+            <span>Checking...</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- Main Content -->
+      <main class="main">
+        <!-- Tabs Navigation -->
+        <div class="tabs">
+          <button class="tab-button active" data-tab="overview">Overview</button>
+          <button class="tab-button" data-tab="search">Search</button>
+          <button class="tab-button" data-tab="files">Files</button>
+          <button class="tab-button" data-tab="settings">Settings</button>
+        </div>
+
+        <!-- Overview Tab -->
+        <section id="overview" class="tab-content active">
+          <div class="section-title">Codebase Overview</div>
+
+          <!-- Statistics Cards -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-label">Indexed Files</div>
+              <div class="stat-value" id="fileCount">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Code Symbols</div>
+              <div class="stat-value" id="symbolCount">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Dependencies</div>
+              <div class="stat-value" id="importCount">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">DB Size</div>
+              <div class="stat-value" id="dbSize">-</div>
+            </div>
+          </div>
+
+          <!-- Last Indexed -->
+          <div class="last-indexed">
+            <span>Last Indexed:</span>
+            <strong id="lastIndexed">-</strong>
+            <button class="btn btn-small" id="reindexBtn">🔄 Reindex</button>
+          </div>
+
+          <!-- Charts Section -->
+          <div class="charts-grid">
+            <!-- Language Distribution -->
+            <div class="chart-container">
+              <h3>Language Distribution</h3>
+              <canvas id="languageChart"></canvas>
+            </div>
+
+            <!-- Symbol Types -->
+            <div class="chart-container">
+              <h3>Symbol Types</h3>
+              <canvas id="symbolChart"></canvas>
+            </div>
+          </div>
+
+          <!-- Recent Files -->
+          <div class="section-title" style="margin-top: 2rem">Recent Files</div>
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>File</th>
+                  <th>Language</th>
+                  <th>Modified</th>
+                </tr>
+              </thead>
+              <tbody id="recentFilesTable">
+                <tr>
+                  <td colspan="3" class="empty">Loading...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Search Tab -->
+        <section id="search" class="tab-content">
+          <div class="section-title">Search Code</div>
+
+          <div class="search-box">
+            <input
+              type="text"
+              id="searchInput"
+              placeholder="Search for functions, classes, variables..."
+              class="search-input"
+            />
+            <button class="btn btn-primary" id="searchBtn">Search</button>
+          </div>
+
+          <div class="table-container" style="margin-top: 2rem">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>File</th>
+                  <th>Language</th>
+                  <th>Size</th>
+                </tr>
+              </thead>
+              <tbody id="searchResultsTable">
+                <tr>
+                  <td colspan="3" class="empty">Enter a search query to get started</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Files Tab -->
+        <section id="files" class="tab-content">
+          <div class="section-title">Indexed Files</div>
+
+          <div class="file-filter">
+            <input
+              type="text"
+              id="filterInput"
+              placeholder="Filter by language or filename..."
+              class="search-input"
+            />
+          </div>
+
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Path</th>
+                  <th>Language</th>
+                  <th>Size</th>
+                </tr>
+              </thead>
+              <tbody id="filesTable">
+                <tr>
+                  <td colspan="3" class="empty">Loading files...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Settings Tab -->
+        <section id="settings" class="tab-content">
+          <div class="section-title">Configuration</div>
+
+          <form id="settingsForm" class="settings-form">
+            <div class="form-group">
+              <label for="mcpFolder">MCP Folder Path</label>
+              <input type="text" id="mcpFolder" name="mcpFolder" class="form-input" />
+              <small>Path where the MCP server is installed</small>
+            </div>
+
+            <div class="form-group">
+              <label for="dbPath">Database Path</label>
+              <input type="text" id="dbPath" name="dbPath" class="form-input" />
+              <small>Location of the SQLite database file</small>
+            </div>
+
+            <div class="form-group">
+              <label for="dashboardPort">Dashboard Port</label>
+              <input type="number" id="dashboardPort" name="dashboardPort" class="form-input" min="1" max="65535" />
+              <small>Port number for the dashboard</small>
+            </div>
+
+            <div class="form-group checkbox">
+              <input type="checkbox" id="autoIndex" name="autoIndex" />
+              <label for="autoIndex">Enable Auto-Index</label>
+              <small>Automatically reindex files when they change</small>
+            </div>
+
+            <div class="form-group">
+              <label for="batchSize">Batch Size</label>
+              <input type="number" id="batchSize" name="batchSize" class="form-input" min="1" />
+              <small>Number of files to index per batch</small>
+            </div>
+
+            <div class="form-group">
+              <label for="debounceDelay">Debounce Delay (ms)</label>
+              <input type="number" id="debounceDelay" name="debounceDelay" class="form-input" min="100" />
+              <small>Wait time before reindexing after file changes</small>
+            </div>
+
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary">Save Configuration</button>
+              <button type="button" class="btn btn-secondary" id="resetBtn">Reset to Defaults</button>
+            </div>
+          </form>
+
+          <div class="alert alert-info" id="settingsMessage" style="display: none; margin-top: 1rem"></div>
+        </section>
+      </main>
+
+      <!-- Footer -->
+      <footer class="footer">
+        <p>Code Index MCP • Port 34244 • Auto-refresh enabled</p>
+      </footer>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

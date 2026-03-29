@@ -6,6 +6,8 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import {
   searchCode,
   findSymbol,
@@ -17,6 +19,19 @@ import {
   getDependents,
   initializeDatabase,
 } from './tools.js';
+import {
+  getDatabaseStats,
+  getLanguageBreakdown,
+  listIndexedFiles,
+  searchCodeAPI,
+  getConfigAPI,
+  updateConfigAPI,
+  getHealthStatus,
+  getIndexActivity,
+} from '../api/dashboard.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const WEB_ROOT = path.join(path.dirname(__dirname), 'web');
 
 // Initialize database
 initializeDatabase();
@@ -251,9 +266,96 @@ function createExpressServer(port = 3000) {
   const app = express();
   app.use(express.json());
 
+  // Serve static dashboard files
+  app.use(express.static(WEB_ROOT));
+
   // Health check
   app.get('/health', (req, res) => {
-    res.json({ status: 'healthy', service: 'code-index-mcp' });
+    try {
+      const health = getHealthStatus();
+      res.json(health);
+    } catch (error) {
+      res.status(500).json({
+        status: 'unhealthy',
+        service: 'code-index-mcp',
+        error: error.message,
+      });
+    }
+  });
+
+  // Dashboard API routes
+  app.get('/api/stats', (req, res) => {
+    try {
+      const stats = getDatabaseStats();
+      res.json(stats);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/languages', (req, res) => {
+    try {
+      const languages = getLanguageBreakdown();
+      res.json(languages);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/files', (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit || '100', 10);
+      const language = req.query.language || null;
+      const files = listIndexedFiles(limit, language);
+      res.json(files);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/search', (req, res) => {
+    try {
+      const { query, limit = 20 } = req.body;
+      if (!query) {
+        return res.status(400).json({ error: 'Query is required' });
+      }
+      const results = searchCodeAPI(query, limit);
+      res.json(results);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/config', (req, res) => {
+    try {
+      const config = getConfigAPI();
+      res.json(config);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/config', (req, res) => {
+    try {
+      const result = updateConfigAPI(req.body);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ success: false, errors: [error.message] });
+    }
+  });
+
+  app.get('/api/activity', (req, res) => {
+    try {
+      const activity = getIndexActivity();
+      res.json(activity);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Dashboard page
+  app.get('/dashboard', (req, res) => {
+    res.sendFile(path.join(WEB_ROOT, 'index.html'));
   });
 
   // MCP endpoint
@@ -350,11 +452,13 @@ async function main() {
 
   if (mode === 'http') {
     // HTTP mode
-    const port = parseInt(args[1], 10) || 3000;
+    const port = parseInt(args[1], 10) || 34244;
     const app = createExpressServer(port);
 
     app.listen(port, () => {
       console.log(`📡 HTTP Server running on http://localhost:${port}`);
+      console.log(`   🎨 Dashboard: http://localhost:${port}/dashboard`);
+      console.log(`   📊 API: http://localhost:${port}/api`);
       console.log(`   POST /mcp - MCP JSON-RPC endpoint`);
       console.log(`   GET /health - Health check\n`);
     });
