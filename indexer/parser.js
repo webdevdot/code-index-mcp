@@ -16,13 +16,10 @@ export function parseJavaScript(content, filePath) {
       plugins: [
         'typescript',
         'jsx',
-        'decorators',
         'classProperties',
         'classPrivateProperties',
         'classPrivateMethods',
         'logicalAssignment',
-        'pipelineOperator',
-        'partialApplication',
         'optionalChaining',
         'nullishCoalescingOperator',
       ],

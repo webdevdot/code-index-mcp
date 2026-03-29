@@ -164,6 +164,13 @@ function createMCPServer() {
     version: '1.0.0',
   });
 
+  // Register tool capabilities
+  server.registerCapabilities({
+    tools: {
+      listChanged: false,
+    },
+  });
+
   // Handle list tools request
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return { tools: TOOLS };
