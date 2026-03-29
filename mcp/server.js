@@ -32,6 +32,7 @@ import {
   triggerIndexing,
 } from '../api/dashboard.js';
 import Indexer from '../indexer/indexer.js';
+import FileWatcher from '../watcher/watcher.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = path.join(path.dirname(__dirname), 'web');
@@ -495,11 +496,21 @@ function createExpressServer(port = 3000) {
 async function main() {
   const args = process.argv.slice(2);
   const mode = args[0] || 'stdio';
+  const projectRoot = process.cwd();
 
   console.log('\n🚀 Code Index MCP Server\n');
 
   // Start auto-indexing
   await autoIndexProject();
+
+  // Start file watcher (unless disabled)
+  const skipWatcher = process.env.SKIP_WATCHER === 'true';
+  if (!skipWatcher) {
+    const watcher = new FileWatcher(projectRoot);
+    watcher.start();
+  } else {
+    console.log('⏭️  File watcher skipped (SKIP_WATCHER=true)\n');
+  }
 
   if (mode === 'http') {
     // HTTP mode
