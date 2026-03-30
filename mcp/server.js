@@ -624,7 +624,7 @@ function createExpressServer(port = 3000) {
 async function main() {
   const args = process.argv.slice(2);
   const mode = args[0] || 'stdio';
-  const projectRoot = process.cwd();
+  const projectRoot = process.env.PROJECT_ROOT || process.cwd();
 
   console.log('\n🚀 Code Index MCP Server\n');
 
