@@ -1,15 +1,30 @@
 -- Code Index Database Schema
 -- SQLite with FTS5 for full-text search
 
+-- Projects table: tracks registered project folders
+CREATE TABLE IF NOT EXISTS projects (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  folder_path TEXT UNIQUE NOT NULL,
+  status TEXT DEFAULT 'pending',
+  file_count INTEGER DEFAULT 0,
+  symbol_count INTEGER DEFAULT 0,
+  last_indexed INTEGER,
+  created_at INTEGER DEFAULT (strftime('%s', 'now')),
+  updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+);
+
 -- Files table: stores metadata about indexed files
 CREATE TABLE IF NOT EXISTS files (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  path TEXT UNIQUE NOT NULL,
+  project_id INTEGER,
+  path TEXT NOT NULL,
   language TEXT NOT NULL,
   last_modified INTEGER NOT NULL,
   file_size INTEGER NOT NULL,
   created_at INTEGER DEFAULT (strftime('%s', 'now')),
-  updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+  updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 
 -- FTS5 virtual table for full-text search of file content
@@ -44,8 +59,11 @@ CREATE TABLE IF NOT EXISTS imports (
 );
 
 -- Indexes for performance
+CREATE UNIQUE INDEX IF NOT EXISTS idx_files_project_path ON files(project_id, path);
 CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 CREATE INDEX IF NOT EXISTS idx_files_language ON files(language);
+CREATE INDEX IF NOT EXISTS idx_files_project_id ON files(project_id);
+CREATE INDEX IF NOT EXISTS idx_projects_folder ON projects(folder_path);
 CREATE INDEX IF NOT EXISTS idx_symbols_file_id ON symbols(file_id);
 CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
 CREATE INDEX IF NOT EXISTS idx_symbols_type ON symbols(type);
@@ -62,4 +80,4 @@ CREATE TABLE IF NOT EXISTS metadata (
 -- Initialize metadata
 INSERT OR IGNORE INTO metadata (key, value) VALUES ('last_index_time', '0');
 INSERT OR IGNORE INTO metadata (key, value) VALUES ('indexed_file_count', '0');
-INSERT OR IGNORE INTO metadata (key, value) VALUES ('schema_version', '1');
+INSERT OR IGNORE INTO metadata (key, value) VALUES ('schema_version', '2');
