@@ -1,6 +1,6 @@
 {
   "name": "code-index-mcp",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Production-ready MCP server for code indexing and search using SQLite",
   "type": "module",
   "main": "mcp/server.js",
