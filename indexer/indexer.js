@@ -14,8 +14,9 @@ const DB_PATH = path.join(__dirname, '..', 'code-index.db');
 const SCHEMA_PATH = path.join(__dirname, '..', 'db', 'schema.sql');
 
 class Indexer {
-  constructor(projectRoot = process.cwd()) {
+  constructor(projectRoot = process.cwd(), projectId = null) {
     this.projectRoot = projectRoot;
+    this.projectId = projectId;
     this.db = null;
     this.initializeDatabase();
   }
@@ -25,14 +26,13 @@ class Indexer {
    */
   initializeDatabase() {
     try {
-      // Create database if it doesn't exist
       this.db = new Database(DB_PATH);
       this.db.pragma('journal_mode = WAL');
       this.db.pragma('synchronous = NORMAL');
       this.db.pragma('temp_store = MEMORY');
       this.db.pragma('mmap_size = 30000000000');
 
-      // Load and execute schema
+      // Ensure schema exists (CREATE IF NOT EXISTS is safe to run multiple times)
       const schema = fs.readFileSync(SCHEMA_PATH, 'utf-8');
       this.db.exec(schema);
 
@@ -98,7 +98,11 @@ class Indexer {
       const relativePath = getRelativePath(filePath, this.projectRoot);
 
       // Check if file already indexed and hasn't changed
-      const existingFile = this.db.prepare('SELECT id, last_modified FROM files WHERE path = ?').get(relativePath);
+      const existingQuery = this.projectId
+        ? 'SELECT id, last_modified FROM files WHERE path = ? AND project_id = ?'
+        : 'SELECT id, last_modified FROM files WHERE path = ? AND project_id IS NULL';
+      const existingParams = this.projectId ? [relativePath, this.projectId] : [relativePath];
+      const existingFile = this.db.prepare(existingQuery).get(...existingParams);
       if (existingFile && existingFile.last_modified === stats.mtime) {
         return { skipped: true, path: relativePath };
       }
@@ -121,13 +125,13 @@ class Indexer {
           // Delete old symbols and imports
           this.db.prepare('DELETE FROM symbols WHERE file_id = ?').run(fileId);
           this.db.prepare('DELETE FROM imports WHERE file_id = ?').run(fileId);
-          // Delete from FTS index (by path)
-          this.db.prepare('DELETE FROM file_index WHERE path = ?').run(relativePath);
+          // Delete from FTS index (by file_id)
+          this.db.prepare('DELETE FROM file_index WHERE file_id = ?').run(fileId);
         } else {
           const result = this.db.prepare(`
-            INSERT INTO files (path, language, last_modified, file_size)
-            VALUES (?, ?, ?, ?)
-          `).run(relativePath, language, stats.mtime, stats.size);
+            INSERT INTO files (project_id, path, language, last_modified, file_size)
+            VALUES (?, ?, ?, ?, ?)
+          `).run(this.projectId, relativePath, language, stats.mtime, stats.size);
           fileId = result.lastInsertRowid;
         }
 
@@ -235,6 +239,21 @@ class Indexer {
       WHERE key = 'indexed_file_count'
     `).run(results.indexed.toString(), now);
 
+    // Update project stats if project-scoped
+    if (this.projectId) {
+      const fileCount = this.db.prepare(
+        'SELECT COUNT(*) as count FROM files WHERE project_id = ?'
+      ).get(this.projectId).count;
+      const symbolCount = this.db.prepare(
+        'SELECT COUNT(*) as count FROM symbols WHERE file_id IN (SELECT id FROM files WHERE project_id = ?)'
+      ).get(this.projectId).count;
+
+      this.db.prepare(`
+        UPDATE projects SET file_count = ?, symbol_count = ?, last_indexed = ?, status = 'indexed', updated_at = ?
+        WHERE id = ?
+      `).run(fileCount, symbolCount, now, now, this.projectId);
+    }
+
     console.log('\n📊 Indexing Summary:');
     console.log(`   Indexed: ${results.indexed}`);
     console.log(`   Skipped: ${results.skipped}`);
@@ -289,8 +308,13 @@ class Indexer {
   }
 }
 
-// CLI entry point
-async function main() {
+// CLI entry point — only runs when executed directly
+const isDirectRun = process.argv[1] && (
+  process.argv[1].endsWith('indexer/indexer.js') ||
+  process.argv[1].endsWith('indexer.js')
+) && !process.argv[1].includes('server.js');
+
+if (isDirectRun) {
   const args = process.argv.slice(2);
   const projectRoot = args[0] || process.cwd();
 
@@ -310,10 +334,9 @@ async function main() {
       console.log('📈 Database Statistics:');
       console.log(`   Files: ${stats.files}`);
       console.log(`   Symbols: ${stats.symbols}`);
-      console.log(`   Imports: ${stats.importCount}`);
+      console.log(`   Imports: ${stats.imports}`);
       console.log(`   Size: ${(stats.databaseSize / 1024 / 1024).toFixed(2)} MB`);
     } else {
-      // Default: full index
       const verbose = args.includes('-v') || args.includes('--verbose');
       await indexer.indexProject(verbose);
     }
@@ -321,10 +344,5 @@ async function main() {
     indexer.close();
   }
 }
-
-main().catch(error => {
-  console.error('✗ Fatal error:', error.message);
-  process.exit(1);
-});
 
 export default Indexer;

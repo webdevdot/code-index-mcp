@@ -13,9 +13,10 @@ const __dirname = path.dirname(__filename);
 const DB_PATH = path.join(__dirname, '..', 'code-index.db');
 
 class FileWatcher {
-  constructor(projectRoot = process.cwd(), debounceMs = 1000) {
+  constructor(projectRoot = process.cwd(), debounceMs = 1000, projectId = null) {
     this.projectRoot = projectRoot;
     this.debounceMs = debounceMs;
+    this.projectId = projectId;
     this.db = null;
     this.pendingUpdates = new Map();
     this.debounceTimer = null;
@@ -55,8 +56,12 @@ class FileWatcher {
 
       // Begin transaction
       const transaction = this.db.transaction(() => {
-        // Get existing file
-        const existingFile = this.db.prepare('SELECT id FROM files WHERE path = ?').get(relativePath);
+        // Get existing file (scoped to project)
+        const existingQuery = this.projectId
+          ? 'SELECT id FROM files WHERE path = ? AND project_id = ?'
+          : 'SELECT id FROM files WHERE path = ? AND project_id IS NULL';
+        const existingParams = this.projectId ? [relativePath, this.projectId] : [relativePath];
+        const existingFile = this.db.prepare(existingQuery).get(...existingParams);
         let fileId;
 
         if (existingFile) {
@@ -71,14 +76,14 @@ class FileWatcher {
           // Delete old symbols and imports
           this.db.prepare('DELETE FROM symbols WHERE file_id = ?').run(fileId);
           this.db.prepare('DELETE FROM imports WHERE file_id = ?').run(fileId);
-          // Delete from FTS index (by path)
-          this.db.prepare('DELETE FROM file_index WHERE path = ?').run(relativePath);
+          // Delete from FTS index (by file_id)
+          this.db.prepare('DELETE FROM file_index WHERE file_id = ?').run(fileId);
         } else {
           // Insert new file
           const result = this.db.prepare(`
-            INSERT INTO files (path, language, last_modified, file_size)
-            VALUES (?, ?, ?, ?)
-          `).run(relativePath, language, stats.mtime, stats.size);
+            INSERT INTO files (project_id, path, language, last_modified, file_size)
+            VALUES (?, ?, ?, ?, ?)
+          `).run(this.projectId, relativePath, language, stats.mtime, stats.size);
           fileId = result.lastInsertRowid;
         }
 
@@ -247,8 +252,13 @@ class FileWatcher {
   }
 }
 
-// CLI entry point
-function main() {
+// CLI entry point — only runs when executed directly
+const isDirectRun = process.argv[1] && (
+  process.argv[1].endsWith('watcher/watcher.js') ||
+  process.argv[1].endsWith('watcher.js')
+) && !process.argv[1].includes('server.js');
+
+if (isDirectRun) {
   const projectRoot = process.argv[2] || process.cwd();
 
   console.log(`\n🚀 Code Index - File Watcher\n`);
@@ -258,7 +268,5 @@ function main() {
   const watcher = new FileWatcher(projectRoot);
   watcher.start();
 }
-
-main();
 
 export default FileWatcher;

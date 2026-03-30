@@ -3,48 +3,214 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { getSnippet } from '../utils/file.js';
+import Indexer from '../indexer/indexer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DB_PATH = path.join(__dirname, '..', 'code-index.db');
+const SCHEMA_PATH = path.join(__dirname, '..', 'db', 'schema.sql');
 
 let db = null;
 
 /**
- * Initialize database connection
+ * Initialize database connection (runs migration if needed)
  */
 export function initializeDatabase() {
   if (!db) {
     db = new Database(DB_PATH);
     db.pragma('journal_mode = WAL');
     db.pragma('synchronous = NORMAL');
+
+    // Load schema (all CREATE IF NOT EXISTS — safe to run always)
+    const schema = fs.readFileSync(SCHEMA_PATH, 'utf-8');
+    db.exec(schema);
+
+    // Check if files table needs migration (old schema without project_id)
+    const columns = db.prepare("PRAGMA table_info(files)").all();
+    const hasProjectId = columns.some(c => c.name === 'project_id');
+
+    if (!hasProjectId) {
+      console.log('🔄 Schema upgrade: adding projects support...');
+      db.exec(`
+        DROP TABLE IF EXISTS file_index;
+        DROP TABLE IF EXISTS imports;
+        DROP TABLE IF EXISTS symbols;
+        DROP TABLE IF EXISTS files;
+      `);
+      db.exec(schema);
+      console.log('✓ Schema upgraded');
+    }
   }
   return db;
 }
 
 /**
- * search_code - Full-text search across all files
+ * Resolve project filter — returns project_id or null
  */
-export function searchCode(query, limit = 20) {
+function resolveProjectId(project) {
+  if (!project) return null;
   const db = initializeDatabase();
+  // Try by name first, then by folder path
+  const row = db.prepare(
+    'SELECT id FROM projects WHERE name = ? OR folder_path = ?'
+  ).get(project, project);
+  return row ? row.id : null;
+}
+
+/**
+ * add_project - Register a folder and index it
+ */
+export async function addProject(folderPath, name) {
+  const db = initializeDatabase();
+  const absPath = path.resolve(folderPath);
+
+  if (!fs.existsSync(absPath)) {
+    return { error: `Folder not found: ${absPath}` };
+  }
+
+  const stat = fs.statSync(absPath);
+  if (!stat.isDirectory()) {
+    return { error: `Not a directory: ${absPath}` };
+  }
+
+  // Use folder name as project name if not given
+  const projectName = name || path.basename(absPath);
+
+  // Check if already registered
+  const existing = db.prepare('SELECT id, name, status FROM projects WHERE folder_path = ?').get(absPath);
+  if (existing) {
+    return {
+      message: `Project "${existing.name}" already registered`,
+      project_id: existing.id,
+      status: existing.status,
+      folder: absPath,
+    };
+  }
+
+  // Insert project
+  const result = db.prepare(
+    'INSERT INTO projects (name, folder_path, status) VALUES (?, ?, ?)'
+  ).run(projectName, absPath, 'indexing');
+  const projectId = result.lastInsertRowid;
+
+  // Start indexing
+  try {
+    const indexer = new Indexer(absPath, projectId);
+    await indexer.indexProject(false);
+    indexer.close();
+  } catch (error) {
+    db.prepare("UPDATE projects SET status = 'error' WHERE id = ?").run(projectId);
+    return { error: `Indexing failed: ${error.message}`, project_id: projectId };
+  }
+
+  // Get final stats
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+
+  return {
+    message: `Project "${projectName}" added and indexed`,
+    project_id: projectId,
+    name: projectName,
+    folder: absPath,
+    files: project.file_count,
+    symbols: project.symbol_count,
+    status: project.status,
+  };
+}
+
+/**
+ * list_projects - List all registered projects
+ */
+export function listProjects() {
+  const db = initializeDatabase();
+  const projects = db.prepare(`
+    SELECT id, name, folder_path, status, file_count, symbol_count, last_indexed, created_at
+    FROM projects ORDER BY name ASC
+  `).all();
+
+  return {
+    count: projects.length,
+    projects: projects.map(p => ({
+      id: p.id,
+      name: p.name,
+      folder: p.folder_path,
+      status: p.status,
+      files: p.file_count,
+      symbols: p.symbol_count,
+      last_indexed: p.last_indexed ? new Date(p.last_indexed * 1000).toISOString() : null,
+    })),
+  };
+}
+
+/**
+ * remove_project - Remove a project and its indexed data
+ */
+export function removeProject(project) {
+  const db = initializeDatabase();
+  const row = db.prepare(
+    'SELECT id, name, folder_path FROM projects WHERE name = ? OR folder_path = ? OR id = ?'
+  ).get(project, project, parseInt(project) || 0);
+
+  if (!row) {
+    return { error: `Project not found: ${project}` };
+  }
+
+  // Delete all related data in a transaction
+  db.transaction(() => {
+    const fileIds = db.prepare('SELECT id FROM files WHERE project_id = ?').all(row.id).map(f => f.id);
+    for (const fid of fileIds) {
+      db.prepare('DELETE FROM symbols WHERE file_id = ?').run(fid);
+      db.prepare('DELETE FROM imports WHERE file_id = ?').run(fid);
+      db.prepare('DELETE FROM file_index WHERE file_id = ?').run(fid);
+    }
+    db.prepare('DELETE FROM files WHERE project_id = ?').run(row.id);
+    db.prepare('DELETE FROM projects WHERE id = ?').run(row.id);
+  })();
+
+  return {
+    message: `Project "${row.name}" removed`,
+    name: row.name,
+    folder: row.folder_path,
+  };
+}
+
+/**
+ * search_code - Full-text search across files (optionally filtered by project)
+ */
+export function searchCode(query, limit = 20, project = null) {
+  const db = initializeDatabase();
+  const projectId = resolveProjectId(project);
 
   try {
-    const results = db.prepare(`
+    let sql = `
       SELECT DISTINCT
         f.path,
         fi.content,
-        f.language
+        f.language,
+        p.name as project_name
       FROM file_index fi
       JOIN files f ON fi.file_id = f.id
+      LEFT JOIN projects p ON f.project_id = p.id
       WHERE fi.content MATCH ?
-      LIMIT ?
-    `).all(query, limit);
+    `;
+    const params = [query];
+
+    if (project) {
+      if (!projectId) return { error: `Project not found: ${project}`, results: [] };
+      sql += ' AND f.project_id = ?';
+      params.push(projectId);
+    }
+
+    sql += ' LIMIT ?';
+    params.push(limit);
+
+    const results = db.prepare(sql).all(...params);
 
     return results.map(result => {
       const snippet = getSnippet(result.content, 1, 3);
       return {
         path: result.path,
         language: result.language,
+        project: result.project_name || null,
         snippet: snippet.substring(0, 500) + (snippet.length > 500 ? '...' : ''),
         content_length: result.content.length,
       };
@@ -56,13 +222,14 @@ export function searchCode(query, limit = 20) {
 }
 
 /**
- * find_symbol - Find symbol definitions by name
+ * find_symbol - Find symbol definitions by name (optionally filtered by project)
  */
-export function findSymbol(name, limit = 50) {
+export function findSymbol(name, limit = 50, project = null) {
   const db = initializeDatabase();
+  const projectId = resolveProjectId(project);
 
   try {
-    const results = db.prepare(`
+    let sql = `
       SELECT
         s.id,
         s.name,
@@ -71,19 +238,32 @@ export function findSymbol(name, limit = 50) {
         s.column,
         s.scope,
         f.path,
-        f.language
+        f.language,
+        p.name as project_name
       FROM symbols s
       JOIN files f ON s.file_id = f.id
-      WHERE s.name LIKE ? OR s.name LIKE ?
-      ORDER BY s.type ASC, f.path ASC
-      LIMIT ?
-    `).all(`%${name}%`, `${name}%`, limit);
+      LEFT JOIN projects p ON f.project_id = p.id
+      WHERE (s.name LIKE ? OR s.name LIKE ?)
+    `;
+    const params = [`%${name}%`, `${name}%`];
+
+    if (project) {
+      if (!projectId) return { error: `Project not found: ${project}`, results: [] };
+      sql += ' AND f.project_id = ?';
+      params.push(projectId);
+    }
+
+    sql += ' ORDER BY s.type ASC, f.path ASC LIMIT ?';
+    params.push(limit);
+
+    const results = db.prepare(sql).all(...params);
 
     return results.map(result => ({
       name: result.name,
       type: result.type,
       path: result.path,
       language: result.language,
+      project: result.project_name || null,
       line: result.line,
       column: result.column,
       scope: result.scope,
@@ -162,12 +342,18 @@ export function getFile(path_) {
 }
 
 /**
- * get_context - Get relevant context combining FTS and symbol search
+ * get_context - Get relevant context combining FTS and symbol search (optionally filtered by project)
  */
-export function getContext(query, limit = 30) {
+export function getContext(query, limit = 30, project = null) {
   const db = initializeDatabase();
+  const projectId = resolveProjectId(project);
 
   try {
+    const projectFilter = project
+      ? (projectId ? ' AND f.project_id = ?' : ' AND 1=0')
+      : '';
+    const projectParams = projectId ? [projectId] : [];
+
     // Search FTS for matching files
     const fileMatches = db.prepare(`
       SELECT DISTINCT
@@ -175,12 +361,13 @@ export function getContext(query, limit = 30) {
         f.path,
         f.language,
         fi.content,
-        'file' as match_type
+        p.name as project_name
       FROM file_index fi
       JOIN files f ON fi.file_id = f.id
-      WHERE file_index MATCH ?
+      LEFT JOIN projects p ON f.project_id = p.id
+      WHERE file_index MATCH ?${projectFilter}
       LIMIT ?
-    `).all(query, Math.floor(limit / 2));
+    `).all(query, ...projectParams, Math.floor(limit / 2));
 
     // Search symbols for matching names
     const symbolMatches = db.prepare(`
@@ -192,19 +379,19 @@ export function getContext(query, limit = 30) {
         s.type,
         s.line,
         s.scope,
-        'symbol' as match_type
+        p.name as project_name
       FROM symbols s
       JOIN files f ON s.file_id = f.id
-      WHERE s.name LIKE ? OR s.name LIKE ?
+      LEFT JOIN projects p ON f.project_id = p.id
+      WHERE (s.name LIKE ? OR s.name LIKE ?)${projectFilter}
       ORDER BY s.type ASC
       LIMIT ?
-    `).all(`%${query}%`, `${query}%`, Math.floor(limit / 2));
+    `).all(`%${query}%`, `${query}%`, ...projectParams, Math.floor(limit / 2));
 
     // Combine and deduplicate results
     const results = [];
     const seenFiles = new Set();
 
-    // Add file matches
     for (const match of fileMatches) {
       if (!seenFiles.has(match.path)) {
         seenFiles.add(match.path);
@@ -213,12 +400,12 @@ export function getContext(query, limit = 30) {
           type: 'file_match',
           path: match.path,
           language: match.language,
+          project: match.project_name || null,
           snippet: snippet.substring(0, 300) + (snippet.length > 300 ? '...' : ''),
         });
       }
     }
 
-    // Add symbol matches
     for (const match of symbolMatches) {
       const key = `${match.path}:${match.name}`;
       if (!seenFiles.has(key)) {
@@ -229,6 +416,7 @@ export function getContext(query, limit = 30) {
           symbol_type: match.type,
           path: match.path,
           language: match.language,
+          project: match.project_name || null,
           line: match.line,
           scope: match.scope,
         });
@@ -275,28 +463,44 @@ export function getStats() {
 }
 
 /**
- * list_files - List all indexed files with optional filter
+ * list_files - List all indexed files with optional filter (language and/or project)
  */
-export function listFiles(language = null, limit = 100) {
+export function listFiles(language = null, limit = 100, project = null) {
   const db = initializeDatabase();
+  const projectId = resolveProjectId(project);
 
   try {
-    let query = 'SELECT path, language, file_size FROM files';
-    let params = [];
+    let sql = 'SELECT f.path, f.language, f.file_size, p.name as project_name FROM files f LEFT JOIN projects p ON f.project_id = p.id';
+    const conditions = [];
+    const params = [];
 
     if (language) {
-      query += ' WHERE language = ?';
+      conditions.push('f.language = ?');
       params.push(language);
     }
+    if (project) {
+      if (!projectId) return { error: `Project not found: ${project}`, files: [] };
+      conditions.push('f.project_id = ?');
+      params.push(projectId);
+    }
 
-    query += ' ORDER BY path ASC LIMIT ?';
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ');
+    }
+
+    sql += ' ORDER BY f.path ASC LIMIT ?';
     params.push(limit);
 
-    const results = db.prepare(query).all(...params);
+    const results = db.prepare(sql).all(...params);
 
     return {
       count: results.length,
-      files: results,
+      files: results.map(f => ({
+        path: f.path,
+        language: f.language,
+        file_size: f.file_size,
+        project: f.project_name || null,
+      })),
     };
   } catch (error) {
     console.error('List files error:', error.message);
@@ -369,6 +573,9 @@ export function getDependents(filePath, limit = 50) {
 
 export default {
   initializeDatabase,
+  addProject,
+  listProjects,
+  removeProject,
   searchCode,
   findSymbol,
   getFile,

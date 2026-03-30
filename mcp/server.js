@@ -17,6 +17,9 @@ import {
   listFiles,
   getImports,
   getDependents,
+  addProject,
+  listProjects,
+  removeProject,
   initializeDatabase,
 } from './tools.js';
 import {
@@ -32,6 +35,7 @@ import {
   triggerIndexing,
 } from '../api/dashboard.js';
 import Indexer from '../indexer/indexer.js';
+import FileWatcher from '../watcher/watcher.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = path.join(path.dirname(__dirname), 'web');
@@ -40,7 +44,7 @@ const WEB_ROOT = path.join(path.dirname(__dirname), 'web');
 initializeDatabase();
 
 /**
- * Auto-index project when MCP server starts
+ * Auto-index registered projects when MCP server starts
  * Can be disabled with SKIP_AUTO_INDEX=true environment variable
  */
 async function autoIndexProject() {
@@ -50,29 +54,87 @@ async function autoIndexProject() {
     return;
   }
 
-  console.log('🔄 Starting auto-indexing...');
   try {
-    const indexer = new Indexer(process.cwd());
-    await indexer.indexProject(false);
-    indexer.close();
-    console.log('✓ Auto-indexing completed successfully\n');
+    const db = initializeDatabase();
+    const projects = db.prepare("SELECT id, name, folder_path FROM projects").all();
+
+    if (projects.length === 0) {
+      console.log('📋 No projects registered. Use add_project tool to add a project folder.\n');
+      return;
+    }
+
+    console.log(`🔄 Auto-indexing ${projects.length} project(s)...`);
+    for (const proj of projects) {
+      try {
+        console.log(`  📂 ${proj.name} (${proj.folder_path})`);
+        const indexer = new Indexer(proj.folder_path, proj.id);
+        await indexer.indexProject(false);
+        indexer.close();
+      } catch (error) {
+        console.error(`  ✗ Failed to index ${proj.name}:`, error.message);
+      }
+    }
+    console.log('✓ Auto-indexing completed\n');
   } catch (error) {
     console.error('✗ Auto-indexing failed:', error.message);
-    // Don't exit - server should still work for searches
   }
 }
 
 // Define MCP tools
 const TOOLS = [
   {
+    name: 'add_project',
+    description: 'Register a project folder and index all its code files. Stores project-wise so you can search per project.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        folder_path: {
+          type: 'string',
+          description: 'Absolute path to the project folder (e.g., "/Users/user/Developer/my-app")',
+        },
+        name: {
+          type: 'string',
+          description: 'Project name (defaults to folder name)',
+        },
+      },
+      required: ['folder_path'],
+    },
+  },
+  {
+    name: 'list_projects',
+    description: 'List all registered projects with their index status, file count, and symbol count',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'remove_project',
+    description: 'Remove a project and all its indexed data from the database',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: {
+          type: 'string',
+          description: 'Project name, folder path, or ID to remove',
+        },
+      },
+      required: ['project'],
+    },
+  },
+  {
     name: 'search_code',
-    description: 'Search for code content across all indexed files using full-text search',
+    description: 'Search for code content across indexed files using full-text search. Filter by project to search within a specific project only.',
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
           description: 'Search query (supports words, phrases, and patterns)',
+        },
+        project: {
+          type: 'string',
+          description: 'Filter by project name or folder path (optional — searches all projects if omitted)',
         },
         limit: {
           type: 'number',
@@ -85,13 +147,17 @@ const TOOLS = [
   },
   {
     name: 'find_symbol',
-    description: 'Find symbol definitions (functions, classes, variables) by name',
+    description: 'Find symbol definitions (functions, classes, variables) by name. Filter by project to search within a specific project only.',
     inputSchema: {
       type: 'object',
       properties: {
         name: {
           type: 'string',
           description: 'Symbol name to search for (supports partial matching)',
+        },
+        project: {
+          type: 'string',
+          description: 'Filter by project name or folder path (optional)',
         },
         limit: {
           type: 'number',
@@ -118,13 +184,17 @@ const TOOLS = [
   },
   {
     name: 'get_context',
-    description: 'Get comprehensive context combining file content and symbol matches for a query',
+    description: 'Get comprehensive context combining file content and symbol matches for a query. Filter by project.',
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
           description: 'Search query to find relevant code context',
+        },
+        project: {
+          type: 'string',
+          description: 'Filter by project name or folder path (optional)',
         },
         limit: {
           type: 'number',
@@ -145,13 +215,17 @@ const TOOLS = [
   },
   {
     name: 'list_files',
-    description: 'List all indexed files with optional language filter',
+    description: 'List all indexed files with optional language and project filter',
     inputSchema: {
       type: 'object',
       properties: {
         language: {
           type: 'string',
           description: 'Filter by language (e.g., "javascript", "python", "typescript")',
+        },
+        project: {
+          type: 'string',
+          description: 'Filter by project name or folder path (optional)',
         },
         limit: {
           type: 'number',
@@ -225,12 +299,24 @@ function createMCPServer() {
       let result;
 
       switch (name) {
+        case 'add_project':
+          result = await addProject(args.folder_path, args.name);
+          break;
+
+        case 'list_projects':
+          result = listProjects();
+          break;
+
+        case 'remove_project':
+          result = removeProject(args.project);
+          break;
+
         case 'search_code':
-          result = searchCode(args.query, args.limit || 20);
+          result = searchCode(args.query, args.limit || 20, args.project);
           break;
 
         case 'find_symbol':
-          result = findSymbol(args.name, args.limit || 50);
+          result = findSymbol(args.name, args.limit || 50, args.project);
           break;
 
         case 'get_file':
@@ -238,7 +324,7 @@ function createMCPServer() {
           break;
 
         case 'get_context':
-          result = getContext(args.query, args.limit || 30);
+          result = getContext(args.query, args.limit || 30, args.project);
           break;
 
         case 'get_stats':
@@ -246,7 +332,7 @@ function createMCPServer() {
           break;
 
         case 'list_files':
-          result = listFiles(args.language || null, args.limit || 100);
+          result = listFiles(args.language || null, args.limit || 100, args.project);
           break;
 
         case 'get_imports':
@@ -401,13 +487,44 @@ function createExpressServer(port = 3000) {
     }
   });
 
+  // Project management API routes
+  app.get('/api/projects', (req, res) => {
+    try {
+      res.json(listProjects());
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/projects', async (req, res) => {
+    try {
+      const { folder_path, name } = req.body;
+      if (!folder_path) {
+        return res.status(400).json({ error: 'folder_path is required' });
+      }
+      const result = await addProject(folder_path, name);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/projects/:project', (req, res) => {
+    try {
+      const result = removeProject(req.params.project);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Dashboard page
   app.get('/dashboard', (req, res) => {
     res.sendFile(path.join(WEB_ROOT, 'index.html'));
   });
 
   // MCP endpoint
-  app.post('/mcp', (req, res) => {
+  app.post('/mcp', async (req, res) => {
     const { jsonrpc, id, method, params } = req.body;
 
     if (method === 'tools/list') {
@@ -423,12 +540,24 @@ function createExpressServer(port = 3000) {
         let result;
 
         switch (name) {
+          case 'add_project':
+            result = await addProject(args.folder_path, args.name);
+            break;
+
+          case 'list_projects':
+            result = listProjects();
+            break;
+
+          case 'remove_project':
+            result = removeProject(args.project);
+            break;
+
           case 'search_code':
-            result = searchCode(args.query, args.limit || 20);
+            result = searchCode(args.query, args.limit || 20, args.project);
             break;
 
           case 'find_symbol':
-            result = findSymbol(args.name, args.limit || 50);
+            result = findSymbol(args.name, args.limit || 50, args.project);
             break;
 
           case 'get_file':
@@ -436,7 +565,7 @@ function createExpressServer(port = 3000) {
             break;
 
           case 'get_context':
-            result = getContext(args.query, args.limit || 30);
+            result = getContext(args.query, args.limit || 30, args.project);
             break;
 
           case 'get_stats':
@@ -444,7 +573,7 @@ function createExpressServer(port = 3000) {
             break;
 
           case 'list_files':
-            result = listFiles(args.language || null, args.limit || 100);
+            result = listFiles(args.language || null, args.limit || 100, args.project);
             break;
 
           case 'get_imports':
@@ -495,11 +624,21 @@ function createExpressServer(port = 3000) {
 async function main() {
   const args = process.argv.slice(2);
   const mode = args[0] || 'stdio';
+  const projectRoot = process.cwd();
 
   console.log('\n🚀 Code Index MCP Server\n');
 
   // Start auto-indexing
   await autoIndexProject();
+
+  // Start file watcher (unless disabled)
+  const skipWatcher = process.env.SKIP_WATCHER === 'true';
+  if (!skipWatcher) {
+    const watcher = new FileWatcher(projectRoot);
+    watcher.start();
+  } else {
+    console.log('⏭️  File watcher skipped (SKIP_WATCHER=true)\n');
+  }
 
   if (mode === 'http') {
     // HTTP mode
