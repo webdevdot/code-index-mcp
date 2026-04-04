@@ -8,6 +8,7 @@ import {
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import rateLimit from 'express-rate-limit';
 import {
   searchCode,
   findSymbol,
@@ -519,7 +520,11 @@ function createExpressServer(port = 3000) {
   });
 
   // Dashboard page
-  app.get('/dashboard', (req, res) => {
+  const dashboardLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // limit each IP to 100 requests per windowMs
+  });
+  app.get('/dashboard', dashboardLimiter, (req, res) => {
     res.sendFile(path.join(WEB_ROOT, 'index.html'));
   });
 
