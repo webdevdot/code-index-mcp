@@ -324,20 +324,27 @@ export function triggerIndexing(folderPath) {
       throw new Error('Invalid folder path');
     }
 
-    // Resolve user-provided path to a canonical absolute path
-    const requestedPath = path.resolve(folderPath);
+    // Build canonical allowlist roots first
+    const allowedRoots = Array.isArray(config.PROJECT_FOLDERS) ? config.PROJECT_FOLDERS : [];
+    const canonicalAllowedRoots = allowedRoots
+      .filter(root => typeof root === 'string' && root.trim())
+      .map(root => path.resolve(root))
+      .filter(root => fs.existsSync(root))
+      .map(root => fs.realpathSync(root))
+      .filter(root => fs.statSync(root).isDirectory());
+
+    if (canonicalAllowedRoots.length === 0) {
+      throw new Error('No valid configured project folders available');
+    }
+
+    // Resolve user-provided path and canonicalize
+    const requestedPath = path.resolve(folderPath.trim());
     if (!fs.existsSync(requestedPath)) {
       throw new Error(`Folder does not exist: ${folderPath}`);
     }
     const canonicalRequestedPath = fs.realpathSync(requestedPath);
 
     // Allow indexing only within configured project folders
-    const allowedRoots = Array.isArray(config.PROJECT_FOLDERS) ? config.PROJECT_FOLDERS : [];
-    const canonicalAllowedRoots = allowedRoots
-      .map(root => path.resolve(root))
-      .filter(root => fs.existsSync(root))
-      .map(root => fs.realpathSync(root));
-
     const isAllowed = canonicalAllowedRoots.some(root =>
       canonicalRequestedPath === root || canonicalRequestedPath.startsWith(root + path.sep)
     );
