@@ -337,24 +337,40 @@ export function triggerIndexing(folderPath) {
       throw new Error('No valid configured project folders available');
     }
 
-    // Resolve user-provided path and canonicalize
-    const requestedPath = path.resolve(folderPath.trim());
-    if (!fs.existsSync(requestedPath)) {
-      throw new Error(`Folder does not exist: ${folderPath}`);
-    }
-    const canonicalRequestedPath = fs.realpathSync(requestedPath);
-
-    // Allow indexing only within configured project folders
-    const isAllowed = canonicalAllowedRoots.some(root =>
-      canonicalRequestedPath === root || canonicalRequestedPath.startsWith(root + path.sep)
-    );
-
-    if (!isAllowed) {
-      throw new Error(`Folder is outside configured project folders: ${folderPath}`);
+    // Accept only a simple folder name (no path separators or traversal)
+    const requestedFolderName = folderPath.trim();
+    if (
+      requestedFolderName === '.' ||
+      requestedFolderName === '..' ||
+      requestedFolderName.includes('/') ||
+      requestedFolderName.includes('\\') ||
+      requestedFolderName.includes('\0')
+    ) {
+      throw new Error('Invalid folder path');
     }
 
-    if (!fs.statSync(canonicalRequestedPath).isDirectory()) {
-      throw new Error(`Path is not a directory: ${folderPath}`);
+    // Resolve from trusted roots only
+    let canonicalRequestedPath = null;
+    for (const root of canonicalAllowedRoots) {
+      const candidatePath = path.join(root, requestedFolderName);
+      if (!fs.existsSync(candidatePath)) {
+        continue;
+      }
+      const candidateCanonicalPath = fs.realpathSync(candidatePath);
+      const isWithinRoot =
+        candidateCanonicalPath === root || candidateCanonicalPath.startsWith(root + path.sep);
+      if (!isWithinRoot) {
+        continue;
+      }
+      if (!fs.statSync(candidateCanonicalPath).isDirectory()) {
+        continue;
+      }
+      canonicalRequestedPath = candidateCanonicalPath;
+      break;
+    }
+
+    if (!canonicalRequestedPath) {
+      throw new Error(`Folder does not exist in configured project folders: ${folderPath}`);
     }
 
     // Import the Indexer class
