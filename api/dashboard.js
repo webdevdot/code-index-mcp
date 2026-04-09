@@ -320,34 +320,78 @@ export function triggerIndexing(folderPath) {
   try {
     const config = getConfig();
 
-    // Validate folder path exists
-    if (!fs.existsSync(folderPath)) {
-      throw new Error(`Folder does not exist: ${folderPath}`);
+    if (typeof folderPath !== 'string' || !folderPath.trim()) {
+      throw new Error('Invalid folder path');
     }
 
-    if (!fs.statSync(folderPath).isDirectory()) {
-      throw new Error(`Path is not a directory: ${folderPath}`);
+    // Build canonical allowlist roots first
+    const allowedRoots = Array.isArray(config.PROJECT_FOLDERS) ? config.PROJECT_FOLDERS : [];
+    const canonicalAllowedRoots = allowedRoots
+      .filter(root => typeof root === 'string' && root.trim())
+      .map(root => path.resolve(root))
+      .filter(root => fs.existsSync(root))
+      .map(root => fs.realpathSync(root))
+      .filter(root => fs.statSync(root).isDirectory());
+
+    if (canonicalAllowedRoots.length === 0) {
+      throw new Error('No valid configured project folders available');
+    }
+
+    // Accept only a simple folder name (no path separators or traversal)
+    const requestedFolderName = folderPath.trim();
+    if (
+      requestedFolderName === '.' ||
+      requestedFolderName === '..' ||
+      requestedFolderName.includes('/') ||
+      requestedFolderName.includes('\\') ||
+      requestedFolderName.includes('\0')
+    ) {
+      throw new Error('Invalid folder path');
+    }
+
+    // Resolve from trusted roots only
+    let canonicalRequestedPath = null;
+    for (const root of canonicalAllowedRoots) {
+      const candidatePath = path.join(root, requestedFolderName);
+      if (!fs.existsSync(candidatePath)) {
+        continue;
+      }
+      const candidateCanonicalPath = fs.realpathSync(candidatePath);
+      const isWithinRoot =
+        candidateCanonicalPath === root || candidateCanonicalPath.startsWith(root + path.sep);
+      if (!isWithinRoot) {
+        continue;
+      }
+      if (!fs.statSync(candidateCanonicalPath).isDirectory()) {
+        continue;
+      }
+      canonicalRequestedPath = candidateCanonicalPath;
+      break;
+    }
+
+    if (!canonicalRequestedPath) {
+      throw new Error(`Folder does not exist in configured project folders: ${folderPath}`);
     }
 
     // Import the Indexer class
     const { Indexer } = require('../indexer/indexer.js');
 
     // Create and run indexer for the folder
-    const indexer = new Indexer(folderPath);
+    const indexer = new Indexer(canonicalRequestedPath);
 
     // Run indexing (asynchronous)
     indexer.index()
       .then(() => {
-        console.log(`✓ Indexing completed for ${folderPath}`);
+        console.log(`✓ Indexing completed for ${canonicalRequestedPath}`);
       })
       .catch(err => {
-        console.error(`✗ Indexing failed for ${folderPath}: ${err.message}`);
+        console.error(`✗ Indexing failed for ${canonicalRequestedPath}: ${err.message}`);
       });
 
     return {
       success: true,
-      message: `Indexing started for ${folderPath}`,
-      folder: folderPath,
+      message: `Indexing started for ${canonicalRequestedPath}`,
+      folder: canonicalRequestedPath,
       startedAt: new Date().toISOString(),
     };
   } catch (error) {

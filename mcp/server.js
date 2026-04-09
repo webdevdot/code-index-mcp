@@ -477,9 +477,9 @@ function createExpressServer(port = 3000) {
 
   app.post('/api/index', (req, res) => {
     try {
-      const { folderPath } = req.body;
-      if (!folderPath) {
-        return res.status(400).json({ error: 'folderPath is required' });
+      const { folderPath } = req.body ?? {};
+      if (typeof folderPath !== 'string' || !folderPath.trim()) {
+        return res.status(400).json({ error: 'folderPath must be a non-empty string' });
       }
       const result = triggerIndexing(folderPath);
       res.json(result);
