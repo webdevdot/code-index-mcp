@@ -68,13 +68,16 @@ export async function addProject(folderPath, name) {
     return { error: 'folder_path must be a non-empty string' };
   }
 
-  const resolvedPath = path.resolve(folderPath.trim());
-  if (!fs.existsSync(resolvedPath)) {
+  const safeRoot = fs.realpathSync(PROJECTS_ROOT);
+  const resolvedPath = path.resolve(safeRoot, folderPath.trim());
+
+  let absPath;
+  try {
+    absPath = fs.realpathSync(resolvedPath);
+  } catch {
     return { error: `Folder not found: ${resolvedPath}` };
   }
 
-  const absPath = fs.realpathSync(resolvedPath);
-  const safeRoot = fs.realpathSync(PROJECTS_ROOT);
   const rootWithSep = safeRoot.endsWith(path.sep) ? safeRoot : `${safeRoot}${path.sep}`;
   if (absPath !== safeRoot && !absPath.startsWith(rootWithSep)) {
     return { error: `Folder must be within allowed root: ${safeRoot}` };
