@@ -9,6 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DB_PATH = path.join(__dirname, '..', 'code-index.db');
 const SCHEMA_PATH = path.join(__dirname, '..', 'db', 'schema.sql');
+const PROJECTS_ROOT = path.resolve(process.env.PROJECTS_ROOT || process.cwd());
 
 let db = null;
 
@@ -62,10 +63,21 @@ function resolveProjectId(project) {
  */
 export async function addProject(folderPath, name) {
   const db = initializeDatabase();
-  const absPath = path.resolve(folderPath);
 
-  if (!fs.existsSync(absPath)) {
-    return { error: `Folder not found: ${absPath}` };
+  if (typeof folderPath !== 'string' || !folderPath.trim()) {
+    return { error: 'folder_path must be a non-empty string' };
+  }
+
+  const resolvedPath = path.resolve(folderPath.trim());
+  if (!fs.existsSync(resolvedPath)) {
+    return { error: `Folder not found: ${resolvedPath}` };
+  }
+
+  const absPath = fs.realpathSync(resolvedPath);
+  const safeRoot = fs.realpathSync(PROJECTS_ROOT);
+  const rootWithSep = safeRoot.endsWith(path.sep) ? safeRoot : `${safeRoot}${path.sep}`;
+  if (absPath !== safeRoot && !absPath.startsWith(rootWithSep)) {
+    return { error: `Folder must be within allowed root: ${safeRoot}` };
   }
 
   const stat = fs.statSync(absPath);
