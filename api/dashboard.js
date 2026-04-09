@@ -320,12 +320,33 @@ export function triggerIndexing(folderPath) {
   try {
     const config = getConfig();
 
-    // Validate folder path exists
-    if (!fs.existsSync(folderPath)) {
-      throw new Error(`Folder does not exist: ${folderPath}`);
+    if (typeof folderPath !== 'string' || !folderPath.trim()) {
+      throw new Error('Invalid folder path');
     }
 
-    if (!fs.statSync(folderPath).isDirectory()) {
+    // Resolve user-provided path to a canonical absolute path
+    const requestedPath = path.resolve(folderPath);
+    if (!fs.existsSync(requestedPath)) {
+      throw new Error(`Folder does not exist: ${folderPath}`);
+    }
+    const canonicalRequestedPath = fs.realpathSync(requestedPath);
+
+    // Allow indexing only within configured project folders
+    const allowedRoots = Array.isArray(config.PROJECT_FOLDERS) ? config.PROJECT_FOLDERS : [];
+    const canonicalAllowedRoots = allowedRoots
+      .map(root => path.resolve(root))
+      .filter(root => fs.existsSync(root))
+      .map(root => fs.realpathSync(root));
+
+    const isAllowed = canonicalAllowedRoots.some(root =>
+      canonicalRequestedPath === root || canonicalRequestedPath.startsWith(root + path.sep)
+    );
+
+    if (!isAllowed) {
+      throw new Error(`Folder is outside configured project folders: ${folderPath}`);
+    }
+
+    if (!fs.statSync(canonicalRequestedPath).isDirectory()) {
       throw new Error(`Path is not a directory: ${folderPath}`);
     }
 
@@ -333,21 +354,21 @@ export function triggerIndexing(folderPath) {
     const { Indexer } = require('../indexer/indexer.js');
 
     // Create and run indexer for the folder
-    const indexer = new Indexer(folderPath);
+    const indexer = new Indexer(canonicalRequestedPath);
 
     // Run indexing (asynchronous)
     indexer.index()
       .then(() => {
-        console.log(`✓ Indexing completed for ${folderPath}`);
+        console.log(`✓ Indexing completed for ${canonicalRequestedPath}`);
       })
       .catch(err => {
-        console.error(`✗ Indexing failed for ${folderPath}: ${err.message}`);
+        console.error(`✗ Indexing failed for ${canonicalRequestedPath}: ${err.message}`);
       });
 
     return {
       success: true,
-      message: `Indexing started for ${folderPath}`,
-      folder: folderPath,
+      message: `Indexing started for ${canonicalRequestedPath}`,
+      folder: canonicalRequestedPath,
       startedAt: new Date().toISOString(),
     };
   } catch (error) {
