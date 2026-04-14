@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
 import { fileURLToPath } from 'url';
+import sanitizeFilename from 'sanitize-filename';
 import { getConfig } from '../config/loader.js';
 import { updateConfig } from '../config/manager.js';
 
@@ -340,13 +341,16 @@ export function triggerIndexing(folderPath) {
 
     // Accept only a simple safe folder name (no separators, traversal, or special chars)
     const requestedFolderName = folderPath.trim();
+    const sanitizedFolderName = sanitizeFilename(requestedFolderName);
     if (
-      requestedFolderName === '.' ||
-      requestedFolderName === '..' ||
-      requestedFolderName.includes('/') ||
-      requestedFolderName.includes('\\') ||
-      requestedFolderName.includes('\0') ||
-      !SAFE_FOLDER_NAME_RE.test(requestedFolderName)
+      !sanitizedFolderName ||
+      sanitizedFolderName !== requestedFolderName ||
+      sanitizedFolderName === '.' ||
+      sanitizedFolderName === '..' ||
+      sanitizedFolderName.includes('/') ||
+      sanitizedFolderName.includes('\\') ||
+      sanitizedFolderName.includes('\0') ||
+      !SAFE_FOLDER_NAME_RE.test(sanitizedFolderName)
     ) {
       throw new Error('Invalid folder path');
     }
@@ -354,7 +358,7 @@ export function triggerIndexing(folderPath) {
     // Resolve from trusted roots only
     let canonicalRequestedPath = null;
     for (const root of canonicalAllowedRoots) {
-      const candidatePath = path.join(root, requestedFolderName);
+      const candidatePath = path.join(root, sanitizedFolderName);
       if (!fs.existsSync(candidatePath)) {
         continue;
       }
