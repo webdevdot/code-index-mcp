@@ -2,11 +2,13 @@ import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
 import { fileURLToPath } from 'url';
+import sanitizeFilename from 'sanitize-filename';
 import { getConfig } from '../config/loader.js';
 import { updateConfig } from '../config/manager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.dirname(__dirname);
+const SAFE_FOLDER_NAME_RE = /^[A-Za-z0-9._ -]+$/;
 
 /**
  * Get database connection
@@ -320,34 +322,82 @@ export function triggerIndexing(folderPath) {
   try {
     const config = getConfig();
 
-    // Validate folder path exists
-    if (!fs.existsSync(folderPath)) {
-      throw new Error(`Folder does not exist: ${folderPath}`);
+    if (typeof folderPath !== 'string' || !folderPath.trim()) {
+      throw new Error('Invalid folder path');
     }
 
-    if (!fs.statSync(folderPath).isDirectory()) {
-      throw new Error(`Path is not a directory: ${folderPath}`);
+    // Build canonical allowlist roots first
+    const allowedRoots = Array.isArray(config.PROJECT_FOLDERS) ? config.PROJECT_FOLDERS : [];
+    const canonicalAllowedRoots = allowedRoots
+      .filter(root => typeof root === 'string' && root.trim())
+      .map(root => path.resolve(root))
+      .filter(root => fs.existsSync(root))
+      .map(root => fs.realpathSync(root))
+      .filter(root => fs.statSync(root).isDirectory());
+
+    if (canonicalAllowedRoots.length === 0) {
+      throw new Error('No valid configured project folders available');
+    }
+
+    // Accept only a simple safe folder name (no separators, traversal, or special chars)
+    const requestedFolderName = folderPath.trim();
+    const sanitizedFolderName = sanitizeFilename(requestedFolderName);
+    if (
+      !sanitizedFolderName ||
+      sanitizedFolderName !== requestedFolderName ||
+      sanitizedFolderName === '.' ||
+      sanitizedFolderName === '..' ||
+      sanitizedFolderName.includes('/') ||
+      sanitizedFolderName.includes('\\') ||
+      sanitizedFolderName.includes('\0') ||
+      !SAFE_FOLDER_NAME_RE.test(sanitizedFolderName)
+    ) {
+      throw new Error('Invalid folder path');
+    }
+
+    // Resolve from trusted roots only
+    let canonicalRequestedPath = null;
+    for (const root of canonicalAllowedRoots) {
+      const candidatePath = path.join(root, sanitizedFolderName);
+      if (!fs.existsSync(candidatePath)) {
+        continue;
+      }
+      const candidateCanonicalPath = fs.realpathSync(candidatePath);
+      const isWithinRoot =
+        candidateCanonicalPath === root || candidateCanonicalPath.startsWith(root + path.sep);
+      if (!isWithinRoot) {
+        continue;
+      }
+      if (!fs.statSync(candidateCanonicalPath).isDirectory()) {
+        continue;
+      }
+      canonicalRequestedPath = candidateCanonicalPath;
+      break;
+    }
+
+    if (!canonicalRequestedPath) {
+      throw new Error(`Folder does not exist in configured project folders: ${folderPath}`);
     }
 
     // Import the Indexer class
     const { Indexer } = require('../indexer/indexer.js');
 
     // Create and run indexer for the folder
-    const indexer = new Indexer(folderPath);
+    const indexer = new Indexer(canonicalRequestedPath);
 
     // Run indexing (asynchronous)
     indexer.index()
       .then(() => {
-        console.log(`✓ Indexing completed for ${folderPath}`);
+        console.log(`✓ Indexing completed for ${canonicalRequestedPath}`);
       })
       .catch(err => {
-        console.error(`✗ Indexing failed for ${folderPath}: ${err.message}`);
+        console.error(`✗ Indexing failed for ${canonicalRequestedPath}: ${err.message}`);
       });
 
     return {
       success: true,
-      message: `Indexing started for ${folderPath}`,
-      folder: folderPath,
+      message: `Indexing started for ${canonicalRequestedPath}`,
+      folder: canonicalRequestedPath,
       startedAt: new Date().toISOString(),
     };
   } catch (error) {
