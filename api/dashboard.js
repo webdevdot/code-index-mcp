@@ -7,6 +7,7 @@ import { updateConfig } from '../config/manager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.dirname(__dirname);
+const SAFE_FOLDER_NAME_RE = /^[A-Za-z0-9._ -]+$/;
 
 /**
  * Get database connection
@@ -337,14 +338,15 @@ export function triggerIndexing(folderPath) {
       throw new Error('No valid configured project folders available');
     }
 
-    // Accept only a simple folder name (no path separators or traversal)
+    // Accept only a simple safe folder name (no separators, traversal, or special chars)
     const requestedFolderName = folderPath.trim();
     if (
       requestedFolderName === '.' ||
       requestedFolderName === '..' ||
       requestedFolderName.includes('/') ||
       requestedFolderName.includes('\\') ||
-      requestedFolderName.includes('\0')
+      requestedFolderName.includes('\0') ||
+      !SAFE_FOLDER_NAME_RE.test(requestedFolderName)
     ) {
       throw new Error('Invalid folder path');
     }
